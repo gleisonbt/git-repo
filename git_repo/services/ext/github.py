@@ -13,6 +13,8 @@ from git.exc import GitCommandError
 
 from datetime import datetime
 
+import arrow
+
 GITHUB_COM_FQDN = 'github.com'
 
 @register_target('hub', 'github')
@@ -87,6 +89,126 @@ class GithubService(RepositoryService):
                                               'Check the namespace or the private token\'s privileges') from err
             raise ResourceError('Unhandled exception: {}'.format(err)) from err
 
+
+    def list_graphQL(self,user, _long=False):
+        if not self.gh.user(user):
+            raise ResourceNotFoundError("User {} does not exists.".format(user))
+
+        query = """
+            query finfUserRepos($user:String!){
+                user(login:$user){
+                    repositories(first:100){
+                    totalCount
+                    nodes{
+                        isFork
+                        isPrivate
+                        object(expression:"master") {
+                            ... on Commit {
+                                history {
+                                totalCount
+                                }
+                            }
+                        }
+                        pullRequests{
+                        totalCount
+                        }
+                        issues{
+                        totalCount
+                        }
+                        forks{
+                        totalCount
+                        }
+                        collaborators{
+                        totalCount
+                        }
+                        watchers{
+                        totalCount
+                        }
+                        stargazers{
+                        totalCount
+                        }
+                        primaryLanguage{
+                        name
+                        }   
+                        nameWithOwner
+                        updatedAt
+                        }
+                    }
+                }
+            }
+        """
+
+        json = {
+            "query": query, "variables":{
+                "user":user
+            }
+        }
+
+
+
+        result = __run_query( json)
+
+        repositories = result["data"]["user"]["repositories"]["nodes"]
+        if not _long:
+            repositories = list([repo["nameWithOwner"] for repo in repositories])
+            yield "{}"
+            yield ("Total repositories: {}".format(len(repositories)),)
+            yield from columnize(repositories)
+        else:
+            yield "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:12}\t{}"
+            yield ['Status', 'Commits', 'Reqs', 'Issues', 'Forks', 'Coders', 'Watch', 'Likes', 'Lang', 'Modif', 'Name']
+            for repo in repositories:
+                try:
+                    if arrow.get(repo["updatedAt"]).datetime.year < datetime.now().year:
+                        date_fmt = "%b %d %Y"
+                    else:
+                        date_fmt = "%b %d %H:%M"
+
+                    status = ''.join([
+                        'F' if repo["isFork"] else ' ',               # is a fork?
+                        'P' if repo["isPrivate"] else ' ',            # is private?
+                    ])
+                    nb_pulls = repo["pullRequests"]["totalCount"]
+                    nb_issues = repo["issues"]["totalCount"] - nb_pulls
+                    yield [
+                        # status
+                        status,
+                        # stats
+                        str(repo["object"]["history"]["totalCount"]),          # number of commits
+                        str(nb_pulls),                                # number of pulls
+                        str(nb_issues),                               # number of issues
+                        str(repo["forks"]["totalCount"]),                              # number of forks
+                        str(repo["collaborators"]["totalCount"]),     # number of contributors
+                        str(repo["watchers"]["totalCount"]),                           # number of subscribers
+                        str(repo["stargazers"]["totalCount"] or 0),                    # number of ♥
+                        # info
+                        repo["primaryLanguage"]["name"] or '?',                      # language
+                        arrow.get(repo["updatedAt"]).datetime.strftime(date_fmt),      # date
+                        repo["nameWithOwner"],             # name
+                    ]
+                except Exception as err:
+                    if 'Git Repository is empty.' == err.args[0].json()['message']:
+                        yield [
+                            # status
+                            'E',
+                            # stats
+                            'ø',     # number of commits
+                            'ø',     # number of pulls
+                            'ø',     # number of issues
+                            'ø',     # number of forks
+                            'ø',     # number of contributors
+                            'ø',     # number of subscribers
+                            'ø',     # number of ♥
+                            # info
+                            '?',     # language
+                            arrow.get(repo["updatedAt"]).datetime.strftime(date_fmt),      # date
+                            repo["nameWithOwner"],             # name
+                        ]
+                    else:
+                        print("Cannot show repository {}: {}".format(repo["nameWithOwner"]), err))
+
+
+
     def list(self, user, _long=False):
         if not self.gh.user(user):
             raise ResourceNotFoundError("User {} does not exists.".format(user))
@@ -152,6 +274,34 @@ class GithubService(RepositoryService):
 
     def _format_gist(self, gist):
         return gist.split('https://gist.github.com/')[-1].split('.git')[0]
+
+
+    def gist_list_grapgQL(user, gist=None):
+        query = """
+        query findGistsByUser($user:String!){
+            user(login:$user){
+            
+            gists(first:100){
+            nodes{
+                name
+                createdAt
+                description
+                isPublic
+                pushedAt
+            }
+            }
+        }
+        }
+        """
+
+        json = {
+            "query": query, "variables":{
+                "user":user
+            }
+        }
+
+        result = __run_query( json)
+
 
     def gist_list(self, gist=None):
         if not gist:
