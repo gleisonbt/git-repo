@@ -615,5 +615,34 @@ class GithubService(RepositoryService):
 
     @staticmethod
     def get_project_default_branch(project):
+        query = """
+            query parentProject($user:String!, $repo:String!){
+                repository(owner:$user, name:$repo){
+                    defaultBranchRef{
+                    name
+                    }
+                    parent{
+                    name
+                    owner{
+                        login
+                    }
+                    }
+                }
+            }
+        """
+
+        json = {
+            "query": query, "variables":{
+                "user":user, "repo":project.name
+            }
+        }
+
+        result = __run_query(self, json)
+
+        return result["data"]["defaultBranchRef"]["name"] or 'master'
+
+
+    @staticmethod
+    def get_project_default_branch(project):
        return project.default_branch or 'master'
 
