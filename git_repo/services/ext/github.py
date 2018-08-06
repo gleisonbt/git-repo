@@ -295,10 +295,7 @@ class GithubService(RepositoryService):
             gists(first:100){
             nodes{
                 name
-                createdAt
                 description
-                isPublic
-                pushedAt
             }
             }
         }
@@ -307,11 +304,30 @@ class GithubService(RepositoryService):
 
         json = {
             "query": query, "variables":{
-                "user":user
+                "user":self.gh.user().login
             }
         }
 
         result = __run_query( json)
+
+        gists = result["data"]["user"]["gists"]["nodes"]
+
+        if not gist:
+            yield "{:45.45} {}"
+            yield 'title', 'url'
+            for gist in gists:
+                yield gist["description"], "https://gist.github.com/" + self.gh.user().login + gist["name"]
+        else:
+            gist = self.gh.gist(self._format_gist(gist))
+            if gist is None:
+                raise ResourceNotFoundError('Gist does not exists.')
+            yield "{:15}\t{:7}\t{}"
+            yield 'language', 'size', 'name'
+            for gist_file in gist.iter_files():
+                yield (gist_file.language if gist_file.language else 'Raw text',
+                        gist_file.size,
+                        gist_file.filename)
+
 
 
     def gist_list(self, gist=None):
@@ -463,6 +479,37 @@ class GithubService(RepositoryService):
                     raise ResourceError("Unhandled formatting error: {}".format(err.errors))
             raise ResourceError(err.message)
 
+
+    def request_list_graphQL(self, user, repo):
+        query = """
+         query requestList($user:String!, $repo:String!){
+            repository(owner:$user, name:$repo){
+                pullRequests(first:100){
+                nodes{
+                    id
+                    title
+                    url
+                }
+                }
+            }
+        }
+        """
+
+        json = {
+            "query": query, "variables":{
+                "user":user, "repo":repo
+            }
+        }
+
+        result = __run_query(self, json)
+
+        pulls = result["data"]["user"]["gists"]["nodes"]
+
+        yield "{}\t{:<60}\t{}"
+        yield 'id', 'title', 'URL'
+        for pull in pulls:
+            yield str(pulls["number"]), pulls["title"]], pulls['url']
+
     def request_list(self, user, repo):
         repository = self.gh.repository(user, repo)
         yield "{}\t{:<60}\t{}"
@@ -511,6 +558,37 @@ class GithubService(RepositoryService):
                 raise ResourceExistsError("A token already exist for this machine on your github account.")
             else:
                 raise err
+
+    def get_parent_project_url_graphQL(self, user, project, rw=True):
+        query = """
+            query parentProject($user:String!, $repo:String!){
+                repository(owner:$user, name:$repo){
+                    parent{
+                    name
+                    owner{
+                        login
+                    }
+                    }
+                }
+            }
+        """
+
+        json = {
+            "query": query, "variables":{
+                "user":user, "repo":project
+            }
+        }
+
+        result = __run_query(self, json)
+
+        parent = result["data"]["repository"]["parent"]
+        if not parent:
+            return None
+        return self.format_path(
+                repository=parent["name"],
+                namespace=parent["owner"]["login"],
+                rw=rw)
+
 
     def get_parent_project_url(self, user, project, rw=True):
         parent = self.gh.repository(user, project).parent
