@@ -90,6 +90,17 @@ class GithubService(RepositoryService):
             raise ResourceError('Unhandled exception: {}'.format(err)) from err
 
 
+    def __run_query(self, query):
+        URL = 'https://api.github.com/graphql'
+
+        request = requests.post(URL, json=query,auth=HTTPBasicAuth('gleisonbt', 'Aleister93'))
+
+        if request.status_code == 200:
+            return request.json()
+        else:
+            raise Exception("Query failed to run by returning code of {}. {}".format(request.status_code, query))
+
+
     def list_graphQL(self,user, _long=False):
         if not self.gh.user(user):
             raise ResourceNotFoundError("User {} does not exists.".format(user))
@@ -146,7 +157,7 @@ class GithubService(RepositoryService):
 
 
 
-        result = __run_query( json)
+        result = __run_query(self,json)
 
         repositories = result["data"]["user"]["repositories"]["nodes"]
         if not _long:
@@ -205,7 +216,7 @@ class GithubService(RepositoryService):
                             repo["nameWithOwner"],             # name
                         ]
                     else:
-                        print("Cannot show repository {}: {}".format(repo["nameWithOwner"]), err))
+                        print("Cannot show repository {}: {}".format(repo["nameWithOwner"]), err)
 
 
 
