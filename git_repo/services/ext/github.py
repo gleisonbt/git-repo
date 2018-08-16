@@ -304,7 +304,7 @@ class GithubService(RepositoryService):
         return gist.split('https://gist.github.com/')[-1].split('.git')[0]
 
 
-    def gist_list_grapgQL(user, gist=None):
+    def gist_list(self, gist=None):
         query = """
         query findGistsByUser($user:String!){
             user(login:$user){
@@ -325,7 +325,7 @@ class GithubService(RepositoryService):
             }
         }
 
-        result = __run_query( json)
+        result = self.__run_query(json)
 
         gists = result["data"]["user"]["gists"]["nodes"]
 
@@ -333,7 +333,7 @@ class GithubService(RepositoryService):
             yield "{:45.45} {}"
             yield 'title', 'url'
             for gist in gists:
-                yield gist["description"], "https://gist.github.com/" + self.gh.user().login + gist["name"]
+                yield gist["description"], "https://gist.github.com/" + self.gh.user().login +"/" + gist["name"]
         else:
             gist = self.gh.gist(self._format_gist(gist))
             if gist is None:
@@ -347,22 +347,22 @@ class GithubService(RepositoryService):
 
 
 
-    def gist_list(self, gist=None):
-        if not gist:
-            yield "{:45.45} {}"
-            yield 'title', 'url'
-            for gist in self.gh.iter_gists(self.gh.user().login):
-                yield gist.description, gist.html_url
-        else:
-            gist = self.gh.gist(self._format_gist(gist))
-            if gist is None:
-                raise ResourceNotFoundError('Gist does not exists.')
-            yield "{:15}\t{:7}\t{}"
-            yield 'language', 'size', 'name'
-            for gist_file in gist.iter_files():
-                yield (gist_file.language if gist_file.language else 'Raw text',
-                        gist_file.size,
-                        gist_file.filename)
+    # def gist_list(self, gist=None):
+    #     if not gist:
+    #         yield "{:45.45} {}"
+    #         yield 'title', 'url'
+    #         for gist in self.gh.iter_gists(self.gh.user().login):
+    #             yield gist.description, gist.html_url
+    #     else:
+    #         gist = self.gh.gist(self._format_gist(gist))
+    #         if gist is None:
+    #             raise ResourceNotFoundError('Gist does not exists.')
+    #         yield "{:15}\t{:7}\t{}"
+    #         yield 'language', 'size', 'name'
+    #         for gist_file in gist.iter_files():
+    #             yield (gist_file.language if gist_file.language else 'Raw text',
+    #                     gist_file.size,
+    #                     gist_file.filename)
 
 
     def gist_fetch(self, gist, fname=None):
@@ -497,13 +497,13 @@ class GithubService(RepositoryService):
             raise ResourceError(err.message)
 
 
-    def request_list_graphQL(self, user, repo):
+    def request_list(self, user, repo):
         query = """
          query requestList($user:String!, $repo:String!){
             repository(owner:$user, name:$repo){
                 pullRequests(first:100){
                 nodes{
-                    id
+                    number
                     title
                     url
                 }
@@ -520,19 +520,19 @@ class GithubService(RepositoryService):
 
         result = self.__run_query(json)
 
-        pulls = result["data"]["user"]["gists"]["nodes"]
+        pulls = result["data"]["repository"]["pullRequests"]["nodes"]
 
         yield "{}\t{:<60}\t{}"
         yield 'id', 'title', 'URL'
         for pull in pulls:
-            yield str(pulls["number"]), pulls["title"], pulls['url']
+            yield str(pull["number"]), pull["title"], pull['url']
 
-    def request_list(self, user, repo):
-        repository = self.gh.repository(user, repo)
-        yield "{}\t{:<60}\t{}"
-        yield 'id', 'title', 'URL'
-        for pull in repository.iter_pulls():
-            yield str(pull.number), pull.title, pull.links['html']
+    # def request_list(self, user, repo):
+    #     repository = self.gh.repository(user, repo)
+    #     yield "{}\t{:<60}\t{}"
+    #     yield 'id', 'title', 'URL'
+    #     for pull in repository.iter_pulls():
+    #         yield str(pull.number), pull.title, pull.links['html']
 
     def request_fetch(self, user, repo, request, pull=False, force=False):
         if pull:
@@ -576,7 +576,7 @@ class GithubService(RepositoryService):
             else:
                 raise err
 
-    def get_parent_project_url_graphQL(self, user, project, rw=True):
+    def get_parent_project_url(self, user, project, rw=True):
         query = """
             query parentProject($user:String!, $repo:String!){
                 repository(owner:$user, name:$repo){
@@ -598,7 +598,7 @@ class GithubService(RepositoryService):
 
         result = self.__run_query(json)
 
-        parent = result["data"]["repository"]["parent"]
+        parent = result["data"]["repository"]
         if not parent:
             return None
         return self.format_path(
@@ -608,9 +608,16 @@ class GithubService(RepositoryService):
 
 
     def get_parent_project_url(self, user, project, rw=True):
+        print("porra de project")
+        print(project)
         parent = self.gh.repository(user, project).parent
         if not parent:
+            print("not parent")
             return None
+        print(self.format_path(
+                repository=parent.name,
+                namespace=parent.owner.login,
+                rw=rw))
         return self.format_path(
                 repository=parent.name,
                 namespace=parent.owner.login,
@@ -630,36 +637,38 @@ class GithubService(RepositoryService):
     def is_repository_empty(project):
         return project.size == 0
 
-    @staticmethod
-    def get_project_default_branch_graphQL(project):
-        query = """
-            query parentProject($user:String!, $repo:String!){
-                repository(owner:$user, name:$repo){
-                    defaultBranchRef{
-                    name
-                    }
-                    parent{
-                    name
-                    owner{
-                        login
-                    }
-                    }
-                }
-            }
-        """
+    # @staticmethod
+    # def get_project_default_branch(project):
+    #     query = """
+    #         query parentProject($user:String!, $repo:String!){
+    #             repository(owner:$user, name:$repo){
+    #                 defaultBranchRef{
+    #                 name
+    #                 }
+    #                 parent{
+    #                 name
+    #                 owner{
+    #                     login
+    #                 }
+    #                 }
+    #             }
+    #         }
+    #     """
 
-        json = {
-            "query": query, "variables":{
-                "user":project.user, "repo":project.name
-            }
-        }
+    #     json = {
+    #         "query": query, "variables":{
+    #             "user":project.user, "repo":project.name
+    #         }
+    #     }
 
-        result = self.__run_query(json)
+    #     result = self.__run_query(json)
 
-        return result["data"]["defaultBranchRef"]["name"] or 'master'
+    #     return result["data"]["defaultBranchRef"]["name"] or 'master'
 
 
     @staticmethod
     def get_project_default_branch(project):
+       print(project.user)
+       print(project.name)
        return project.default_branch or 'master'
 
