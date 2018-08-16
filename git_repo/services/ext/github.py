@@ -15,6 +15,10 @@ from datetime import datetime
 
 import arrow
 
+import requests
+
+from requests.auth import HTTPBasicAuth
+
 GITHUB_COM_FQDN = 'github.com'
 
 @register_target('hub', 'github')
@@ -93,7 +97,7 @@ class GithubService(RepositoryService):
     def __run_query(self, query):
         URL = 'https://api.github.com/graphql'
 
-        request = requests.post(URL, json=query,auth=HTTPBasicAuth('gleisonbt', 'Aleister93'))
+        request = requests.post(URL, json=query,auth=HTTPBasicAuth(self.username, self._privatekey))
 
         if request.status_code == 200:
             return request.json()
@@ -101,7 +105,7 @@ class GithubService(RepositoryService):
             raise Exception("Query failed to run by returning code of {}. {}".format(request.status_code, query))
 
 
-    def list_graphQL(self,user, _long=False):
+    def list(self,user, _long=False):
         if not self.gh.user(user):
             raise ResourceNotFoundError("User {} does not exists.".format(user))
 
@@ -157,9 +161,10 @@ class GithubService(RepositoryService):
 
 
 
-        result = __run_query(self,json)
+        result = self.__run_query(json)
 
         repositories = result["data"]["user"]["repositories"]["nodes"]
+        
         if not _long:
             repositories = list([repo["nameWithOwner"] for repo in repositories])
             yield "{}"
@@ -180,24 +185,36 @@ class GithubService(RepositoryService):
                         'P' if repo["isPrivate"] else ' ',            # is private?
                     ])
                     nb_pulls = repo["pullRequests"]["totalCount"]
-                    nb_issues = repo["issues"]["totalCount"] - nb_pulls
+                    nb_issues = repo["issues"]["totalCount"] 
+                    nb_commits = 'ø'
+                    if repo["object"] is not None:
+                        nb_commits = str(repo["object"]["history"]["totalCount"])
+                    nb_collaborator = 0
+                    if repo["collaborators"] is not None:
+                        nb_collaborator = repo["collaborators"]["totalCount"]
+                    language = '?'
+                    if repo["primaryLanguage"] is not None:
+                        language = repo["primaryLanguage"]["name"]
+
                     yield [
                         # status
                         status,
                         # stats
-                        str(repo["object"]["history"]["totalCount"]),          # number of commits
+                        nb_commits,          # number of commits
                         str(nb_pulls),                                # number of pulls
                         str(nb_issues),                               # number of issues
                         str(repo["forks"]["totalCount"]),                              # number of forks
-                        str(repo["collaborators"]["totalCount"]),     # number of contributors
+                        str(nb_collaborator),     # number of contributors
                         str(repo["watchers"]["totalCount"]),                           # number of subscribers
-                        str(repo["stargazers"]["totalCount"] or 0),                    # number of ♥
+                        str(repo["stargazers"]["totalCount"]),                    # number of ♥
                         # info
-                        repo["primaryLanguage"]["name"] or '?',                      # language
+                        language,                      # language
                         arrow.get(repo["updatedAt"]).datetime.strftime(date_fmt),      # date
                         repo["nameWithOwner"],             # name
                     ]
                 except Exception as err:
+                    print("crlho")
+                    print(err.args[1])
                     if 'Git Repository is empty.' == err.args[0].json()['message']:
                         yield [
                             # status
@@ -220,68 +237,68 @@ class GithubService(RepositoryService):
 
 
 
-    def list(self, user, _long=False):
-        if not self.gh.user(user):
-            raise ResourceNotFoundError("User {} does not exists.".format(user))
+    # def list(self, user, _long=False):
+    #     if not self.gh.user(user):
+    #         raise ResourceNotFoundError("User {} does not exists.".format(user))
 
-        repositories = self.gh.iter_user_repos(user)
-        if not _long:
-            repositories = list(["/".join([user, repo.name]) for repo in repositories])
-            yield "{}"
-            yield ("Total repositories: {}".format(len(repositories)),)
-            yield from columnize(repositories)
-        else:
-            yield "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:12}\t{}"
-            yield ['Status', 'Commits', 'Reqs', 'Issues', 'Forks', 'Coders', 'Watch', 'Likes', 'Lang', 'Modif', 'Name']
-            for repo in repositories:
-                try:
-                    if repo.updated_at.year < datetime.now().year:
-                        date_fmt = "%b %d %Y"
-                    else:
-                        date_fmt = "%b %d %H:%M"
+    #     repositories = self.gh.iter_user_repos(user)
+    #     if not _long:
+    #         repositories = list(["/".join([user, repo.name]) for repo in repositories])
+    #         yield "{}"
+    #         yield ("Total repositories: {}".format(len(repositories)),)
+    #         yield from columnize(repositories)
+    #     else:
+    #         yield "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:12}\t{}"
+    #         yield ['Status', 'Commits', 'Reqs', 'Issues', 'Forks', 'Coders', 'Watch', 'Likes', 'Lang', 'Modif', 'Name']
+    #         for repo in repositories:
+    #             try:
+    #                 if repo.updated_at.year < datetime.now().year:
+    #                     date_fmt = "%b %d %Y"
+    #                 else:
+    #                     date_fmt = "%b %d %H:%M"
 
-                    status = ''.join([
-                        'F' if repo.fork else ' ',               # is a fork?
-                        'P' if repo.private else ' ',            # is private?
-                    ])
-                    nb_pulls = len(list(repo.iter_pulls()))
-                    nb_issues = len(list(repo.iter_issues())) - nb_pulls
-                    yield [
-                        # status
-                        status,
-                        # stats
-                        str(len(list(repo.iter_commits()))),          # number of commits
-                        str(nb_pulls),                                # number of pulls
-                        str(nb_issues),                               # number of issues
-                        str(repo.forks),                              # number of forks
-                        str(len(list(repo.iter_contributors()))),     # number of contributors
-                        str(repo.watchers),                           # number of subscribers
-                        str(repo.stargazers or 0),                    # number of ♥
-                        # info
-                        repo.language or '?',                      # language
-                        repo.updated_at.strftime(date_fmt),      # date
-                        '/'.join([user, repo.name]),             # name
-                    ]
-                except Exception as err:
-                    if 'Git Repository is empty.' == err.args[0].json()['message']:
-                        yield [
-                            # status
-                            'E',
-                            # stats
-                            'ø',     # number of commits
-                            'ø',     # number of pulls
-                            'ø',     # number of issues
-                            'ø',     # number of forks
-                            'ø',     # number of contributors
-                            'ø',     # number of subscribers
-                            'ø',     # number of ♥
-                            # info
-                            '?',     # language
-                            repo.updated_at.strftime(date_fmt),      # date
-                            '/'.join([user, repo.name]),             # name
-                        ]
-                    else:
-                        print("Cannot show repository {}: {}".format('/'.join([user, repo.name]), err))
+    #                 status = ''.join([
+    #                     'F' if repo.fork else ' ',               # is a fork?
+    #                     'P' if repo.private else ' ',            # is private?
+    #                 ])
+    #                 nb_pulls = len(list(repo.iter_pulls()))
+    #                 nb_issues = len(list(repo.iter_issues())) - nb_pulls
+    #                 yield [
+    #                     # status
+    #                     status,
+    #                     # stats
+    #                     str(len(list(repo.iter_commits()))),          # number of commits
+    #                     str(nb_pulls),                                # number of pulls
+    #                     str(nb_issues),                               # number of issues
+    #                     str(repo.forks),                              # number of forks
+    #                     str(len(list(repo.iter_contributors()))),     # number of contributors
+    #                     str(repo.watchers),                           # number of subscribers
+    #                     str(repo.stargazers or 0),                    # number of ♥
+    #                     # info
+    #                     repo.language or '?',                      # language
+    #                     repo.updated_at.strftime(date_fmt),      # date
+    #                     '/'.join([user, repo.name]),             # name
+    #                 ]
+    #             except Exception as err:
+    #                 if 'Git Repository is empty.' == err.args[0].json()['message']:
+    #                     yield [
+    #                         # status
+    #                         'E',
+    #                         # stats
+    #                         'ø',     # number of commits
+    #                         'ø',     # number of pulls
+    #                         'ø',     # number of issues
+    #                         'ø',     # number of forks
+    #                         'ø',     # number of contributors
+    #                         'ø',     # number of subscribers
+    #                         'ø',     # number of ♥
+    #                         # info
+    #                         '?',     # language
+    #                         repo.updated_at.strftime(date_fmt),      # date
+    #                         '/'.join([user, repo.name]),             # name
+    #                     ]
+    #                 else:
+    #                     print("Cannot show repository {}: {}".format('/'.join([user, repo.name]), err))
 
     def _format_gist(self, gist):
         return gist.split('https://gist.github.com/')[-1].split('.git')[0]
@@ -501,14 +518,14 @@ class GithubService(RepositoryService):
             }
         }
 
-        result = __run_query(self, json)
+        result = self.__run_query(json)
 
         pulls = result["data"]["user"]["gists"]["nodes"]
 
         yield "{}\t{:<60}\t{}"
         yield 'id', 'title', 'URL'
         for pull in pulls:
-            yield str(pulls["number"]), pulls["title"]], pulls['url']
+            yield str(pulls["number"]), pulls["title"], pulls['url']
 
     def request_list(self, user, repo):
         repository = self.gh.repository(user, repo)
@@ -579,7 +596,7 @@ class GithubService(RepositoryService):
             }
         }
 
-        result = __run_query(self, json)
+        result = self.__run_query(json)
 
         parent = result["data"]["repository"]["parent"]
         if not parent:
@@ -614,7 +631,7 @@ class GithubService(RepositoryService):
         return project.size == 0
 
     @staticmethod
-    def get_project_default_branch(project):
+    def get_project_default_branch_graphQL(project):
         query = """
             query parentProject($user:String!, $repo:String!){
                 repository(owner:$user, name:$repo){
@@ -633,11 +650,11 @@ class GithubService(RepositoryService):
 
         json = {
             "query": query, "variables":{
-                "user":user, "repo":project.name
+                "user":project.user, "repo":project.name
             }
         }
 
-        result = __run_query(self, json)
+        result = self.__run_query(json)
 
         return result["data"]["defaultBranchRef"]["name"] or 'master'
 
